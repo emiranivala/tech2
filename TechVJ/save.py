@@ -1,29 +1,15 @@
-# Don't Remove Credit Tg - @VJ_Botz
-# Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
-# Ask Doubt on telegram @KingVJ01
-
 import asyncio 
-import os
-import time
-import json
-
 import pyrogram
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait, UserIsBlocked, InputUserDeactivated, UserAlreadyParticipant, InviteHashExpired, UsernameNotOccupied
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message 
-
+import time
+import os
+import threading
+import json
 from config import API_ID, API_HASH
 from database.db import database 
 from TechVJ.strings import strings, HELP_TXT
-
-# ----- THROTTLE SETTINGS -----
-# Throttle thresholds in bytes per second:
-# 4 MB/s download, 8 MB/s upload
-THRESHOLD_DOWN = 4 * 1024 * 1024   # 4 MB/s
-THRESHOLD_UP   = 8 * 1024 * 1024   # 8 MB/s
-
-# Dictionary to store last time and last bytes processed for each message & type
-throttle_tracker = {}
 
 def get(obj, key, default=None):
     try:
@@ -31,64 +17,50 @@ def get(obj, key, default=None):
     except:
         return default
 
-# Progress callback with throttling
-def progress(current, total, message, type):
-    now = time.time()
-    key = (message.id, type)
-    if key not in throttle_tracker:
-        throttle_tracker[key] = (now, current)
-    else:
-        last_time, last_bytes = throttle_tracker[key]
-        delta_time = now - last_time
-        delta_bytes = current - last_bytes
-        if delta_time > 0:
-            speed = delta_bytes / delta_time  # bytes per second
-            threshold = THRESHOLD_DOWN if type == "down" else THRESHOLD_UP
-            if speed > threshold:
-                # Calculate the expected time for delta_bytes at the threshold speed
-                expected_time = delta_bytes / threshold
-                extra_time = expected_time - delta_time
-                if extra_time > 0:
-                    time.sleep(extra_time)
-        throttle_tracker[key] = (time.time(), current)
-        
-    with open(f'{message.id}{type}status.txt', "w") as fileup:
-        fileup.write(f"{current * 100 / total:.1f}%")
-
-# Fast status updates (with shorter sleep intervals)
-FAST_TRANSFER = True
 
 async def downstatus(client: Client, statusfile, message):
     while True:
         if os.path.exists(statusfile):
             break
-        await asyncio.sleep(0.5 if FAST_TRANSFER else 3)
+        await asyncio.sleep(3)
       
     while os.path.exists(statusfile):
         with open(statusfile, "r") as downread:
             txt = downread.read()
+        # Use a simple dot if the status is empty
         status_text = f"Downloaded : {txt}" if txt.strip() else "."
         try:
             await client.edit_message_text(message.chat.id, message.id, status_text)
-            await asyncio.sleep(1 if FAST_TRANSFER else 10)
+            await asyncio.sleep(10)
         except Exception:
-            await asyncio.sleep(0.5 if FAST_TRANSFER else 5)
+            await asyncio.sleep(5)
 
+
+# upload status
 async def upstatus(client: Client, statusfile, message):
     while True:
         if os.path.exists(statusfile):
             break
-        await asyncio.sleep(0.5 if FAST_TRANSFER else 3)
+        await asyncio.sleep(3)      
     while os.path.exists(statusfile):
         with open(statusfile, "r") as upread:
             txt = upread.read()
+        # Use a simple dot if the status is empty
         status_text = f"Uploaded : {txt}" if txt.strip() else "."
         try:
             await client.edit_message_text(message.chat.id, message.id, status_text)
-            await asyncio.sleep(1 if FAST_TRANSFER else 10)
+            await asyncio.sleep(10)
         except Exception:
-            await asyncio.sleep(0.5 if FAST_TRANSFER else 5)
+            await asyncio.sleep(5)
 
+
+# progress writer
+def progress(current, total, message, type):
+    with open(f'{message.id}{type}status.txt', "w") as fileup:
+        fileup.write(f"{current * 100 / total:.1f}%")
+
+
+# start command
 @Client.on_message(filters.command(["start"]))
 async def send_start(client: Client, message: Message):
     buttons = [[
@@ -106,9 +78,12 @@ async def send_start(client: Client, message: Message):
     )
     return
 
+
+# help command
 @Client.on_message(filters.command(["help"]))
 async def send_help(client: Client, message: Message):
     await client.send_message(message.chat.id, f"{HELP_TXT}")
+
 
 @Client.on_message(filters.text & filters.private)
 async def save(client: Client, message: Message):
@@ -121,7 +96,7 @@ async def save(client: Client, message: Message):
         except:
             toID = fromID
         for msgid in range(fromID, toID + 1):
-            # Private link (https://t.me/c/)
+            # private
             if "https://t.me/c/" in message.text:
                 user_data = database.find_one({'chat_id': message.chat.id})
                 if not get(user_data, 'logged_in', False) or user_data['session'] is None:
@@ -132,7 +107,7 @@ async def save(client: Client, message: Message):
                 chatid = int("-100" + datas[4])
                 await handle_private(client, acc, message, chatid, msgid)
     
-            # Bot link (https://t.me/b/)
+            # bot
             elif "https://t.me/b/" in message.text:
                 user_data = database.find_one({"chat_id": message.chat.id})
                 if not get(user_data, 'logged_in', False) or user_data['session'] is None:
@@ -146,7 +121,7 @@ async def save(client: Client, message: Message):
                 except Exception as e:
                     await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id)
             
-            # Public link
+            # public
             else:
                 username = datas[3]
                 try:
@@ -165,11 +140,14 @@ async def save(client: Client, message: Message):
                         acc = Client("saverestricted", session_string=user_data['session'], api_hash=API_HASH, api_id=API_ID)
                         await acc.connect()
                         await handle_private(client, acc, message, username, msgid)
+                        
                     except Exception as e:
                         await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id)
-            # Wait 5 seconds after processing each message before starting the next.
-            await asyncio.sleep(5)
+            # wait time
+            await asyncio.sleep(3)
 
+
+# handle private
 async def handle_private(client: Client, acc, message: Message, chatid: int, msgid: int):
     msg: Message = await acc.get_messages(chatid, msgid)
     msg_type = get_message_type(msg)
@@ -181,7 +159,7 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
             await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id)
         return
 
-    # Send a simple dot as the progress message.
+    # Send a simple dot message (.) to show progress
     smsg = await client.send_message(message.chat.id, '.', reply_to_message_id=message.id)
     download_status_file = f'{message.id}downstatus.txt'
     upload_status_file = f'{message.id}upstatus.txt'
@@ -197,6 +175,7 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
             os.remove(download_status_file)
 
     up_task = asyncio.create_task(upstatus(client, upload_status_file, smsg))
+
     caption = msg.caption if msg.caption else None
 
     try:
@@ -260,15 +239,16 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
             except Exception as e:
                 await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id)
     finally:
+        # Auto-delete the downloaded file and cleanup status files from disk.
         if file and os.path.exists(file):
             os.remove(file)
         if os.path.exists(upload_status_file):
             os.remove(upload_status_file)
-        # Delete the progress (dot) message
+        # Delete the dot message after successfully uploaded.
         await client.delete_messages(message.chat.id, [smsg.id])
-        # Wait 5 seconds after processing one file before finishing.
-        await asyncio.sleep(5)
 
+
+# get the type of message
 def get_message_type(msg: pyrogram.types.messages_and_media.message.Message):
     try:
         msg.document.file_id
